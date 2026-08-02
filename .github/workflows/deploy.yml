@@ -1,0 +1,190 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# OIDC token exchange for the AWS deploy role; no static AWS keys.
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Django deployment checks
+        run: uv run python manage.py check --deploy --fail-level ERROR
+        env:
+          DJANGO_SECRET_KEY: ci-only-not-a-real-key
+          DJANGO_ALLOWED_HOSTS: example.com
+
+      - name: Test
+        run: uv run python manage.py test --verbosity 2
+
+  deploy:
+    name: Build and deploy
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-deploy-${{ github.run_id }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2.1.6
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4.2.0
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          push: true
+          # Fargate runtime_platform is X86_64; build to match.
+          platforms: linux/amd64
+          provenance: false
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:sha-${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Register task definition revision
+        id: taskdef
+        run: |
+          set -euo pipefail
+          IMAGE="${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:sha-${{ github.sha }}"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+          # describe-task-definition returns server-side fields that
+          # register-task-definition rejects, so whitelist what we send back.
+          aws ecs describe-task-definition \
+            --task-definition "${{ vars.ECS_TASK_FAMILY }}" \
+            --query taskDefinition \
+          | jq --arg IMAGE "$IMAGE" '
+              {family, taskRoleArn, executionRoleArn, networkMode,
+               containerDefinitions, volumes, placementConstraints,
+               requiresCompatibilities, cpu, memory, runtimePlatform,
+               ephemeralStorage}
+              | with_entries(select(.value != null))
+              | .containerDefinitions |= map(
+                  if .name == "app" then .image = $IMAGE else . end)
+            ' > taskdef.json
+
+          ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://taskdef.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "Registered $ARN"
+          echo "arn=$ARN" >> "$GITHUB_OUTPUT"
+
+      # Migrations run before the new image serves traffic. A failure here stops
+      # the deploy, leaving the previous revision live.
+      - name: Run database migrations
+        run: |
+          set -euo pipefail
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --task-definition "${{ steps.taskdef.outputs.arn }}" \
+            --launch-type FARGATE \
+            --started-by "gha-migrate-${{ github.run_id }}" \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ vars.ECS_SUBNET_IDS }}],securityGroups=[${{ vars.ECS_SECURITY_GROUP }}],assignPublicIp=DISABLED}" \
+            --overrides '{"containerOverrides":[{"name":"app","command":["python","manage.py","migrate","--noinput"]}]}' \
+            --query 'tasks[0].taskArn' --output text)
+
+          echo "Migration task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster "${{ vars.ECS_CLUSTER }}" --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "${{ vars.ECS_CLUSTER }}" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          REASON=$(aws ecs describe-tasks \
+            --cluster "${{ vars.ECS_CLUSTER }}" --tasks "$TASK_ARN" \
+            --query 'tasks[0].stoppedReason' --output text)
+
+          echo "::group::Migration logs"
+          aws logs get-log-events \
+            --log-group-name "${{ vars.ECS_LOG_GROUP }}" \
+            --log-stream-name "app/app/${TASK_ARN##*/}" \
+            --query 'events[].message' --output text || echo "(logs unavailable)"
+          echo "::endgroup::"
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::Migrations failed (exit=$EXIT_CODE, reason=$REASON). Deployment aborted."
+            exit 1
+          fi
+          echo "Migrations applied."
+
+      - name: Deploy to ECS
+        run: |
+          set -euo pipefail
+          aws ecs update-service \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --service "${{ vars.ECS_SERVICE }}" \
+            --task-definition "${{ steps.taskdef.outputs.arn }}" \
+            --no-cli-pager --output text --query 'service.serviceName'
+
+          echo "Waiting for the service to reach a steady state..."
+          aws ecs wait services-stable \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --services "${{ vars.ECS_SERVICE }}"
+
+          # The deployment circuit breaker rolls back by making the service
+          # stable again on the OLD revision, so "stable" alone isn't success.
+          LIVE=$(aws ecs describe-services \
+            --cluster "${{ vars.ECS_CLUSTER }}" \
+            --services "${{ vars.ECS_SERVICE }}" \
+            --query 'services[0].deployments[?status==`PRIMARY`].taskDefinition | [0]' \
+            --output text)
+
+          if [ "$LIVE" != "${{ steps.taskdef.outputs.arn }}" ]; then
+            echo "::error::Deployment rolled back. Live revision is $LIVE, expected ${{ steps.taskdef.outputs.arn }}."
+            exit 1
+          fi
+          echo "Deployed $LIVE"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Deployment"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Image | \`${{ steps.taskdef.outputs.image }}\` |"
+            echo "| Task definition | \`${{ steps.taskdef.outputs.arn }}\` |"
+            echo "| Cluster | \`${{ vars.ECS_CLUSTER }}\` |"
+            echo "| Service | \`${{ vars.ECS_SERVICE }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

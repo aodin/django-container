@@ -1,0 +1,49 @@
+# Local development against the same image that ships to ECS.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: django
+      POSTGRES_USER: django
+      POSTGRES_PASSWORD: localdev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U django -d django"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build:
+      context: .
+    ports:
+      - "8000:8000"
+    environment:
+      DJANGO_DEBUG: "true"
+      DJANGO_SECRET_KEY: local-development-only
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: django
+      POSTGRES_USER: django
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_SSLMODE: disable
+    # Live-reload the baked-in code. Excludes the venv and static output so the
+    # image's own copies win.
+    volumes:
+      - ./config:/app/config
+      - ./core:/app/core
+      - ./manage.py:/app/manage.py
+    depends_on:
+      db:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - "python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --reload"
+
+volumes:
+  pgdata:

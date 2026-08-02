@@ -1,0 +1,35 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is gitignored.
+
+# Required: the repo allowed to assume the deploy role.
+github_repository = "your-org/django-container"
+
+# Local AWS profile to run tofu as. Leave empty (or delete) in CI so the
+# assumed OIDC role is used instead.
+aws_profile = "default"
+
+aws_region  = "us-east-1"
+project     = "django-container"
+environment = "production"
+
+# Only this ref can deploy. Use "environment:production" to gate on a GitHub
+# Environment with required reviewers instead.
+github_deploy_ref = "ref:refs/heads/main"
+
+# Set false if the account already has the GitHub OIDC provider.
+create_github_oidc_provider = true
+
+# Serve HTTPS. The certificate must be in us-east-1 and already validated.
+# certificate_arn = "arn:aws:acm:us-east-1:111122223333:certificate/xxxxxxxx"
+# app_domain      = "app.example.com"
+
+# Sizing
+task_cpu      = 512
+task_memory   = 1024
+desired_count = 2
+min_capacity  = 2
+max_capacity  = 6
+
+# Database
+db_instance_class      = "db.t4g.micro"
+db_multi_az            = false
+db_deletion_protection = true
