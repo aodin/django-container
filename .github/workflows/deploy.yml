@@ -47,7 +47,7 @@ jobs:
   deploy:
     name: Build and deploy
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     environment: production
     steps:
       - uses: actions/checkout@v7.0.1
@@ -71,8 +71,7 @@ jobs:
         with:
           context: .
           push: true
-          # Fargate runtime_platform is X86_64; build to match.
-          platforms: linux/amd64
+          platforms: linux/arm64
           provenance: false
           tags: |
             ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:sha-${{ github.sha }}

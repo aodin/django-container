@@ -34,7 +34,12 @@ resource "aws_ecs_task_definition" "app" {
 
   runtime_platform {
     operating_system_family = "LINUX"
-    cpu_architecture        = "X86_64"
+
+    # Graviton. ~20% cheaper per vCPU-hour than X86_64 at identical task sizes,
+    # and matches the db.t4g (Graviton) RDS instance class. The image must be
+    # built for linux/arm64 or the task fails to start with an exec format
+    # error — see the build platform in .github/workflows/deploy.yml.
+    cpu_architecture = "ARM64"
   }
 
   container_definitions = jsonencode([

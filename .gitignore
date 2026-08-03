@@ -16,3 +16,4 @@ staticfiles/
 !*.tfvars.example
 .terraform.lock.hcl
 crash.log
+plan.tmp

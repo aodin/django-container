@@ -3,11 +3,6 @@ Django-container
 
 Example project running Django 6 in a container built by GitHub Actions.
 
-
-, stored in
-Amazon ECR, and deployed to ECS Fargate in `us-east-1`. All AWS resources are
-provisioned with OpenTofu under [`platform/`](platform).
-
 ```
 GitHub push (main)
   └─ test  ──▶ ruff · manage.py check --deploy · manage.py test
@@ -43,6 +38,8 @@ docker compose up --build     # http://localhost:8000
 
 ## Provisioning
 
+All AWS resources are provisioned with OpenTofu under [`platform/`](platform).
+
 Requires OpenTofu ≥ 1.8 and AWS credentials with permission to create VPC, ECS, RDS, and IAM resources.
 
 ```sh
@@ -55,34 +52,37 @@ tofu init
 The ECS service cannot reach a steady state until an image exists in ECR, so the first run is ordered — create the repository, seed an image, then build the rest:
 
 ```sh
-# 1. Repository only
+# Provision the image repository
 tofu apply -target=aws_ecr_repository.app
 
-# 2. Seed an initial image
-REPO=$(tofu output -raw ecr_repository_url)
+# Build and push an initial image
+export REPO=$(tofu output -raw ecr_repository_url)
 aws ecr get-login-password --region us-east-1 \
   | docker login --username AWS --password-stdin "${REPO%%/*}"
-docker buildx build --platform linux/amd64 -t "$REPO:latest" --push ..
+docker buildx build --platform linux/arm64 -t "$REPO:latest" --push ..
 
-# 3. Everything else (~10 min, mostly RDS)
-tofu apply
+# Provision everything else
+tofu plan --out="plan.tmp"
+tofu apply "plan.tmp"
 ```
 
 From then on, GitHub Actions owns deployments and `tofu apply` handles
 infrastructure only — the ECS service ignores changes to `task_definition` and
 `desired_count` so CI and autoscaling don't show up as drift.
 
-### Wire up GitHub
+### GitHub
 
 `tofu output github_actions_variables` prints everything the workflow needs. Add them under **Settings → Secrets and variables → Actions → Variables** (these are variables, not secrets — none is sensitive):
 
-`AWS_REGION`, `AWS_DEPLOY_ROLE_ARN`, `ECR_REPOSITORY`, `ECS_CLUSTER`,
-`ECS_SERVICE`, `ECS_TASK_FAMILY`, `ECS_SUBNET_IDS`, `ECS_SECURITY_GROUP`,
-`ECS_LOG_GROUP`.
-
-The deploy job targets a `production` GitHub Environment — create it (or drop the `environment:` key) or the job won't run.
-
-Push to `main` and the workflow takes over. `tofu output app_url` is the live URL.
+* `AWS_REGION`
+* `AWS_DEPLOY_ROLE_ARN`
+* `ECR_REPOSITORY`
+* `ECS_CLUSTER`
+* `ECS_SERVICE`
+* `ECS_TASK_FAMILY`
+* `ECS_SUBNET_IDS`
+* `ECS_SECURITY_GROUP`
+* `ECS_LOG_GROUP`
 
 ## What gets created
 
@@ -93,7 +93,7 @@ Push to `main` and the workflow takes over. `tofu output app_url` is the live UR
 - **ALB** on HTTP/80. Set `certificate_arn` and it serves HTTPS on 443 and
   redirects 80 → 443.
 - **ECS Fargate** service, 2 tasks by default, CPU/memory target-tracking
-  autoscaling to 6, and a deployment circuit breaker that rolls back a failed
+  autoscaling to 4, and a deployment circuit breaker that rolls back a failed
   release.
 - **RDS PostgreSQL 17**, private, encrypted, `rds.force_ssl` on, 7-day backups.
 - **Secrets Manager** entries for `DJANGO_SECRET_KEY` and the database password,
@@ -131,4 +131,4 @@ aws ecs run-task --cluster <cluster> --task-definition <family> \
 - **Health checks.** `HealthCheckMiddleware` answers `/health/` before anything calls `request.get_host()`. The ALB health-checks targets by private IP, which would otherwise fail `ALLOWED_HOSTS` — this keeps `ALLOWED_HOSTS` strict instead of widening it to `*`.
 - **Migrations** run as a one-off ECS task against the new image before the service is updated. Expand-then-contract if a migration isn't backward compatible, since old tasks serve traffic while it runs.
 - **Static files** are collected at build time and served by WhiteNoise. Move to S3 + CloudFront when asset volume justifies it.
-- **State** is local by default. Uncomment the S3 backend in `platform/versions.tf` before more than one person applies. State contains the generated secrets, so keep the bucket encrypted and private. is EC2-backed. Use `execute-command` for shell access.
+- **State** is local by default. Uncomment the S3 backend in `platform/versions.tf` before more than one person applies. State contains the generated secrets, so keep the bucket encrypted and private. Use `execute-command` for shell access.

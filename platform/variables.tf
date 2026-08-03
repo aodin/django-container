@@ -22,7 +22,43 @@ variable "environment" {
   default     = "production"
 }
 
-# ---------------------------------------------------------------- networking
+# ACM certificate for the ALB, DNS-validated.
+#
+# Self-contained: variables, locals, resources, and outputs all live here, and
+# nothing in the rest of the stack references them. The certificate is created
+# in one phase and consumed in another — you apply this, then paste the ARN
+# into `certificate_arn` in terraform.tfvars and apply again. See the HTTPS
+# section of the README for the exact sequence.
+#
+# Decoupling it this way means a slow or stalled DNS validation never blocks an
+# application deploy.
+#
+# The certificate is created in var.aws_region, which is where the ALB lives.
+# (A CloudFront distribution would instead require one in us-east-1.)
+
+variable "create_certificate" {
+  description = "Request an ACM certificate for app_domain. Leave true once set: flipping it back to false destroys a certificate the listener may still be using."
+  type        = bool
+  default     = false
+}
+
+variable "route53_zone_id" {
+  description = "Route 53 hosted zone for app_domain. When set, validation records are written automatically. When empty, `tofu output acm_validation_records` prints what to add at your DNS provider."
+  type        = string
+  default     = ""
+}
+
+variable "subject_alternative_names" {
+  description = "Extra names on the certificate, e.g. [\"www.example.com\"] or [\"*.example.com\"]."
+  type        = list(string)
+  default     = []
+}
+
+variable "certificate_validation_timeout" {
+  description = "How long to wait for ACM to issue the certificate before failing the apply."
+  type        = string
+  default     = "20m"
+}
 
 variable "vpc_cidr" {
   description = "CIDR block for the VPC."
@@ -40,8 +76,6 @@ variable "az_count" {
     error_message = "az_count must be between 2 and 4 (an ALB requires at least two)."
   }
 }
-
-# ---------------------------------------------------------------------- app
 
 variable "container_port" {
   description = "Port gunicorn listens on inside the container."
@@ -97,8 +131,6 @@ variable "log_retention_days" {
   default     = 30
 }
 
-# ---------------------------------------------------------------------- tls
-
 variable "certificate_arn" {
   description = "ACM certificate ARN. When set, the ALB serves HTTPS on 443 and redirects 80 -> 443. When empty, HTTP only."
   type        = string
@@ -111,7 +143,7 @@ variable "app_domain" {
   default     = ""
 }
 
-# --------------------------------------------------------------------- rds
+# RDS
 
 variable "db_engine_version" {
   description = "PostgreSQL major version."
@@ -167,7 +199,7 @@ variable "db_deletion_protection" {
   default     = true
 }
 
-# ------------------------------------------------------------------- github
+# GitHub
 
 variable "github_repository" {
   description = "GitHub repo allowed to assume the deploy role, as \"owner/name\"."

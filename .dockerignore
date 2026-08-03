@@ -12,3 +12,14 @@ db.sqlite3
 .env
 .env.*
 docker-compose.yml
+
+# OpenTofu / Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+crash.log
+plan.tmp
+

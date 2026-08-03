@@ -1,5 +1,6 @@
 terraform {
-  required_version = ">= 1.8.0"
+  # 1.10 is the floor for the S3 backend's native `use_lockfile` locking.
+  required_version = ">= 1.10.0"
 
   required_providers {
     aws = {
@@ -12,11 +13,15 @@ terraform {
     }
   }
 
-  # Remote state. Create the bucket + lock table once, then uncomment and
-  # run `tofu init -migrate-state`.
+  # Remote state. Set `state_bucket_name` in terraform.tfvars, create the bucket
+  # with `tofu apply -target=aws_s3_bucket.state`, then uncomment this and run
+  # `tofu init -migrate-state`. See the README's "Remote state" section.
+  #
+  # No DynamoDB table: `use_lockfile` uses S3 conditional writes for locking,
+  # which needs OpenTofu >= 1.10.
   #
   # backend "s3" {
-  #   bucket       = "aoe-django-container"
+  #   bucket       = "django-container"
   #   key          = "django-container/production.tfstate"
   #   region       = "us-east-1"
   #   encrypt      = true
