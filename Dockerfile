@@ -33,7 +33,7 @@ WORKDIR /app
 
 COPY --from=builder --chown=django:django /app /app
 
-# Bake static assets into the image so no runtime step depends on them.
+# Static images are saved to the container and served by whitenoise
 RUN DJANGO_SECRET_KEY=build-only python manage.py collectstatic --noinput --clear \
     && chown -R django:django /app/staticfiles
 
