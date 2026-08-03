@@ -214,7 +214,7 @@ variable "github_repository" {
 variable "github_deploy_ref" {
   description = "Git ref subject allowed to assume the deploy role. Use \"ref:refs/heads/main\" or \"environment:production\"."
   type        = string
-  default     = "ref:refs/heads/main"
+  default     = "environment:production"
 }
 
 variable "create_github_oidc_provider" {

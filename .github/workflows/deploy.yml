@@ -48,6 +48,7 @@ jobs:
     name: Build and deploy
     needs: test
     runs-on: ubuntu-24.04-arm
+    environment: production
     steps:
       - uses: actions/checkout@v7.0.1
 
