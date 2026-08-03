@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 ARG PYTHON_VERSION=3.14
 
-FROM ghcr.io/astral-sh/uv:0.11-python${PYTHON_VERSION}-trixie-slim AS builder
+FROM ghcr.io/astral-sh/uv:0.12.1-python${PYTHON_VERSION}-trixie-slim AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
