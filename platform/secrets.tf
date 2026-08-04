@@ -1,5 +1,7 @@
-# Values are generated here and never written to source control. They land in
-# state, so treat the state backend as sensitive and keep it encrypted.
+# Secerts are generated here and never written to source control
+# AWS Secrets Manager takes a minimum of 7 days and a default of 30 days to delete
+# a secret, unless you force an immediate deletion using the CLI
+
 
 resource "random_password" "django_secret_key" {
   length  = 64

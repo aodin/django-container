@@ -1,19 +1,49 @@
 variable "aws_region" {
-  description = "AWS region for all resources."
+  description = "AWS region for all resources"
   type        = string
   default     = "us-east-1"
 }
 
 variable "aws_profile" {
-  description = "Local AWS shared-config profile to run tofu as. Leave empty to use the default credential chain (env vars, SSO, or an assumed role in CI)."
+  description = "AWS profile for running tofu. Leave blank to use the default profile."
   type        = string
   default     = ""
 }
 
 variable "project" {
-  description = "Short project name; used as a prefix for every resource."
+  description = "Short project name; used as a prefix for every resource"
   type        = string
   default     = "django-container"
+}
+
+variable "github_owner_name" {
+  type        = string
+  description = "GitHub organization or user login name"
+}
+
+variable "github_owner_id" {
+  type        = string
+  description = "GitHub numeric owner/organization ID"
+
+  validation {
+    condition     = can(regex("^[0-9]+$", var.github_owner_id))
+    error_message = "Must be a numeric string"
+  }
+}
+
+variable "github_repository_name" {
+  type        = string
+  description = "GitHub repository name"
+}
+
+variable "github_repository_id" {
+  type        = string
+  description = "GitHub numeric repository ID"
+
+  validation {
+    condition     = can(regex("^[0-9]+$", var.github_repository_id))
+    error_message = "Must be a numeric string"
+  }
 }
 
 variable "environment" {
@@ -194,31 +224,7 @@ variable "db_backup_retention_days" {
 }
 
 variable "db_deletion_protection" {
-  description = "Block `tofu destroy` from deleting the database."
+  description = "Block `tofu destroy` from deleting the database"
   type        = bool
-  default     = true
-}
-
-# GitHub
-
-variable "github_repository" {
-  description = "GitHub repo allowed to assume the deploy role, as \"owner/name\"."
-  type        = string
-
-  validation {
-    condition     = can(regex("^[^/]+/[^/]+$", var.github_repository))
-    error_message = "github_repository must be in \"owner/name\" form."
-  }
-}
-
-variable "github_deploy_ref" {
-  description = "Git ref subject allowed to assume the deploy role. Use \"ref:refs/heads/main\" or \"environment:production\"."
-  type        = string
-  default     = "environment:production"
-}
-
-variable "create_github_oidc_provider" {
-  description = "Create the GitHub OIDC provider. Set false if the account already has one."
-  type        = bool
-  default     = true
+  default     = false
 }

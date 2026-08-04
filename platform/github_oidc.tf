@@ -1,22 +1,33 @@
-# Keyless deploys: GitHub Actions exchanges its OIDC token for this role, so
-# there are no long-lived AWS access keys in repository secrets.
+# Use OIDC to allow keyless access to AWS resources
 
 resource "aws_iam_openid_connect_provider" "github" {
-  count = var.create_github_oidc_provider ? 1 : 0
-
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
+  # NOTE the thumbprint is no longer checked, but a value is required. This was
+  # a previously valid value
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
 }
 
-data "aws_iam_openid_connect_provider" "github" {
-  count = var.create_github_oidc_provider ? 0 : 1
-
-  url = "https://token.actions.githubusercontent.com"
-}
-
 locals {
-  github_oidc_arn = var.create_github_oidc_provider ? one(aws_iam_openid_connect_provider.github[*].arn) : one(data.aws_iam_openid_connect_provider.github[*].arn)
+  github_repository = format(
+    "%s/%s",
+    var.github_owner_name,
+    var.github_repository_name,
+  )
+
+  github_immutable_repo_prefix = format(
+    "repo:%s@%s/%s@%s",
+    var.github_owner_name,
+    var.github_owner_id,
+    var.github_repository_name,
+    var.github_repository_id,
+  )
+
+  # NOTE example subs
+  # github_subs = [
+  #   "${local.github_immutable_repo_prefix}:environment:production",
+  #   "${local.github_immutable_repo_prefix}:ref:refs/heads/main",
+  # ]
 }
 
 data "aws_iam_policy_document" "github_assume" {
@@ -25,7 +36,7 @@ data "aws_iam_policy_document" "github_assume" {
 
     principals {
       type        = "Federated"
-      identifiers = [local.github_oidc_arn]
+      identifiers = aws_iam_openid_connect_provider.github[*].arn
     }
 
     condition {
@@ -34,12 +45,13 @@ data "aws_iam_policy_document" "github_assume" {
       values   = ["sts.amazonaws.com"]
     }
 
-    # Scope to one repo and one ref. Without this, any repo on GitHub could
-    # assume the role.
+    # A sub condition is required, and as of July 15, 2026, newly created repositories
+    # will use immutable subject claims with owner and repository IDs
+    # https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/
     condition {
-      test     = "StringEquals"
+      test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values = ["repo:${var.github_repository}:environment:production"]
+      values   = ["${local.github_immutable_repo_prefix}:*"]
     }
   }
 }
@@ -111,7 +123,7 @@ data "aws_iam_policy_document" "github_deploy" {
     resources = ["arn:${local.partition}:ecs:${var.aws_region}:${local.account_id}:task/${local.name}/*"]
   }
 
-  # RunTask and RegisterTaskDefinition hand these roles to ECS.
+  # RunTask and RegisterTaskDefinition pass these roles to ECS
   statement {
     sid     = "PassTaskRoles"
     actions = ["iam:PassRole"]
