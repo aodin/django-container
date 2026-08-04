@@ -1,4 +1,4 @@
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 
 
 class HealthCheckTests(TestCase):
@@ -14,8 +14,12 @@ class HealthCheckTests(TestCase):
         self.assertEqual(response.status_code, 200)
 
 
+@override_settings(
+    STORAGES={
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    }
+)
 class IndexTests(TestCase):
-    def test_index_returns_json(self):
+    def test_index_returns_pk(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "ok")

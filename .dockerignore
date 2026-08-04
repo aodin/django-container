@@ -12,6 +12,7 @@ db.sqlite3
 .env
 .env.*
 docker-compose.yml
+.vscode/
 .DS_Store
 
 # OpenTofu / Terraform

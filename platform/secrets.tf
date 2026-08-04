@@ -2,14 +2,13 @@
 # AWS Secrets Manager takes a minimum of 7 days and a default of 30 days to delete
 # a secret, unless you force an immediate deletion using the CLI
 
-
 resource "random_password" "django_secret_key" {
   length  = 64
   special = false
 }
 
 resource "aws_secretsmanager_secret" "django_secret_key" {
-  name        = "${local.name}/django-secret-key"
+  name        = "${local.name}/django-secret-key-updated"
   description = "Django SECRET_KEY for ${local.name}"
 
   recovery_window_in_days = 7
@@ -26,7 +25,7 @@ resource "random_password" "db" {
 }
 
 resource "aws_secretsmanager_secret" "db_password" {
-  name        = "${local.name}/db-password"
+  name        = "${local.name}/db-password-updated"
   description = "RDS master password for ${local.name}"
 
   recovery_window_in_days = 7
